@@ -85,6 +85,8 @@ impl SshConnection for RealSshConnection {
         
         // Request PTY with proper terminal capabilities for vim
         // Use xterm-256color which vim expects for full functionality
+        // Note: ssh2 crate doesn't expose all terminal mode constants, so we'll rely on
+        // proper TERM environment variable and focus on filtering problematic sequences
         channel.request_pty("xterm-256color", None, None)
             .context("Failed to request PTY")?;
         

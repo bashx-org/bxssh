@@ -127,7 +127,46 @@ impl TerminalIO for CliTerminalIO {
     }
     
     fn write_output(&mut self, data: &[u8]) -> Result<()> {
-        io::stdout().write_all(data)
+        use log::debug;
+        
+        // Enhanced debugging for vim escape sequences
+        let data_str = String::from_utf8_lossy(data);
+        
+        // Check for problematic patterns that vim might send
+        if data_str.contains('\x1b') { // ESC character
+            let esc_count = data_str.matches('\x1b').count();
+            if esc_count > 5 {
+                debug!("High volume of escape sequences ({} ESC chars): {:?}", 
+                    esc_count,
+                    data_str.chars().take(100).collect::<String>()
+                        .replace('\x1b', "\\e")
+                        .replace('\r', "\\r")
+                        .replace('\n', "\\n"));
+            }
+        }
+        
+        // Check for vim-specific sequences that might cause display issues
+        if data_str.contains("\x1b[?1049h") || data_str.contains("\x1b[?1049l") {
+            debug!("Vim alternate screen buffer command detected");
+        }
+        
+        if data_str.contains("\x1b[?25l") || data_str.contains("\x1b[?25h") {
+            debug!("Vim cursor visibility command detected");
+        }
+        
+        // Filter out potentially problematic sequences for terminals that don't handle them well
+        let filtered_data = if data_str.contains("\x1b[>4;2m") || data_str.contains("\x1b[<") {
+            debug!("Filtering potentially problematic mouse/terminal sequences");
+            // Remove SGR mouse sequences and other problematic codes
+            data_str.replace("\x1b[>4;2m", "")
+                   .replace("\x1b[<", "")
+                   .into_bytes()
+        } else {
+            data.to_vec()
+        };
+        
+        // Write data directly to stdout - let the terminal handle escape sequences
+        io::stdout().write_all(&filtered_data)
             .context("Failed to write to stdout")?;
         io::stdout().flush()
             .context("Failed to flush stdout")?;
@@ -139,17 +178,38 @@ impl TerminalIO for CliTerminalIO {
     }
     
     fn initialize(&mut self) -> Result<()> {
+        use crossterm::{execute, cursor, terminal};
+        
         enable_raw_mode().context("Failed to enable raw mode")?;
         self.raw_mode_enabled = true;
         
+        // Set up terminal for vim compatibility
+        execute!(
+            io::stdout(),
+            terminal::Clear(terminal::ClearType::All),
+            cursor::MoveTo(0, 0),
+        )?;
+        
         println!("🔗 Connected to remote server. Use Ctrl+C to exit.\r");
         io::stdout().flush()?;
+        
+        // Small delay to let terminal settle
+        std::thread::sleep(std::time::Duration::from_millis(100));
         
         Ok(())
     }
     
     fn cleanup(&mut self) -> Result<()> {
+        use crossterm::{execute, cursor, terminal};
+        
         if self.raw_mode_enabled {
+            // Reset terminal state before disabling raw mode
+            let _ = execute!(
+                io::stdout(),
+                cursor::Show,
+                terminal::Clear(terminal::ClearType::FromCursorDown)
+            );
+            
             disable_raw_mode().context("Failed to disable raw mode")?;
             self.raw_mode_enabled = false;
         }

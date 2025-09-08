@@ -141,12 +141,23 @@ impl SessionManager {
                     had_activity = true;
                     debug!("Received {} bytes from SSH", n);
                     
-                    // Check for vim crash indicators in output
+                    // Check for vim crash indicators and unusual characters in output
                     let output_str = String::from_utf8_lossy(&ssh_buffer[..n]);
                     if output_str.contains("Vim: Error reading input") || 
                        output_str.contains("terminal too small") ||
                        output_str.contains("E558") { // Vim error codes
                         debug!("Detected vim terminal issue: {}", output_str);
+                    }
+                    
+                    // Debug excessive control characters that might be causing display issues
+                    let control_count = output_str.chars().filter(|c| {
+                        c.is_control() && *c != '\n' && *c != '\r' && *c != '\t' && *c != '\x1b'
+                    }).count();
+                    
+                    if control_count > 10 {
+                        debug!("High number of control characters in output ({}): first 100 chars: {:?}", 
+                            control_count, 
+                            output_str.chars().take(100).collect::<String>());
                     }
                     
                     match self.terminal_io.write_output(&ssh_buffer[..n]) {
