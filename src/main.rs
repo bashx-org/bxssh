@@ -6,6 +6,7 @@ use log::info;
 mod ssh_client;
 mod config;
 mod key_manager;
+mod terminal;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod ssh;
@@ -13,9 +14,13 @@ mod ssh;
 mod ssh_impl;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
+#[cfg(not(target_arch = "wasm32"))]
+mod cli_terminal;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm_ssh;
+#[cfg(target_arch = "wasm32")]
+mod wasm_terminal;
 
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -185,6 +190,8 @@ pub fn wasm_main() {
 pub async fn wasm_connect(host: &str, port: u16, username: &str, password: Option<String>) -> Result<JsValue, JsValue> {
     use wasm_ssh::WasmSshConnection;
     use ssh_client::SshClient;
+    use terminal::SessionManager;
+    use wasm_terminal::WasmTerminalIO;
     
     let connection = WasmSshConnection::new();
     let mut client = SshClient::new(Box::new(connection));
@@ -201,5 +208,18 @@ pub async fn wasm_connect(host: &str, port: u16, username: &str, password: Optio
         return Err(JsValue::from_str("Password is required for WASM SSH"));
     }
     
-    Ok(JsValue::from_str("Connected successfully"))
+    // Start session with WASM terminal I/O
+    let ssh_session = client.start_shell()
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let terminal_io = WasmTerminalIO::new();
+    
+    let mut session_manager = SessionManager::new(
+        ssh_session,
+        Box::new(terminal_io)
+    );
+    
+    session_manager.run_session()
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    
+    Ok(JsValue::from_str("Session completed"))
 }
