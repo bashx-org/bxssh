@@ -59,7 +59,7 @@ cargo build --release
    ```bash
    # Test coverage tool
    cargo install cargo-tarpaulin
-   
+
    # WebAssembly toolchain (future use)
    rustup target add wasm32-unknown-unknown
    cargo install wasm-pack
@@ -67,7 +67,7 @@ cargo build --release
 
 ### Test-Driven Development (TDD) Workflow
 
-**⚠️ CRITICAL: All components except the website MUST follow strict TDD practices.**
+**⚠️ CRITICAL: All components MUST follow strict TDD practices.**
 
 #### TDD Development Process
 
@@ -99,7 +99,7 @@ cargo test
 # Run only unit tests
 cargo test --lib
 
-# Run only integration tests  
+# Run only integration tests
 cargo test --test integration
 
 # Check code without building
