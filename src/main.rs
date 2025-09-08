@@ -1,19 +1,24 @@
+#[cfg(not(target_arch = "wasm32"))]
 use clap::{Arg, Command};
 use anyhow::{Context, Result};
 use log::info;
 
-mod ssh;
 mod ssh_client;
-mod ssh_impl;
 mod config;
 mod key_manager;
 
-#[cfg(target_arch = "wasm32")]
-mod wasm;
-
+#[cfg(not(target_arch = "wasm32"))]
+mod ssh;
+#[cfg(not(target_arch = "wasm32"))]
+mod ssh_impl;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 
+#[cfg(target_arch = "wasm32")]
+mod wasm_ssh;
+
+
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<()> {
     env_logger::init();
     
@@ -158,4 +163,43 @@ fn handle_list_keys() -> Result<()> {
     }
     
     Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    // WASM doesn't use main, entry point is through wasm-bindgen
+}
+
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(start)]
+pub fn wasm_main() {
+    // Initialize logging for WASM
+    web_sys::console::log_1(&"bxssh WebAssembly module loaded".into());
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub async fn wasm_connect(host: &str, port: u16, username: &str, password: Option<String>) -> Result<JsValue, JsValue> {
+    use wasm_ssh::WasmSshConnection;
+    use ssh_client::SshClient;
+    
+    let connection = WasmSshConnection::new();
+    let mut client = SshClient::new(Box::new(connection));
+    
+    // Connect
+    client.connect(host, port)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    
+    // Authenticate
+    if let Some(pass) = password {
+        client.authenticate_with_password(username, &pass)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    } else {
+        return Err(JsValue::from_str("Password is required for WASM SSH"));
+    }
+    
+    Ok(JsValue::from_str("Connected successfully"))
 }
