@@ -1,0 +1,57 @@
+[package]
+name = "bxssh"
+version = "0.1.0"
+edition = "2021"
+authors = ["bashx-org"]
+description = "A WebAssembly-compatible SSH client CLI"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# SSH client functionality
+ssh2 = { version = "0.9", features = ["vendored-openssl"] }
+# Command line argument parsing
+clap = { version = "4.0", features = ["derive"] }
+# Async runtime (WASM-compatible)
+tokio = { version = "1.0", features = ["macros", "rt"] }
+# Error handling
+anyhow = "1.0"
+# Terminal handling
+crossterm = "0.28"
+# Logging
+log = "0.4"
+env_logger = "0.11"
+# SSH Key generation and crypto
+rsa = "0.9"
+ed25519-dalek = "2.0"
+rand = "0.8"
+# Password input
+rpassword = "7.0"
+# Serialization for key storage
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Base64 encoding
+base64 = "0.21"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# WebAssembly-specific dependencies (placeholder)
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Native-only dependencies
+dirs = "5.0"
+
+[dev-dependencies]
+# Testing framework
+mockall = "0.12"
+tempfile = "3.0"
+serial_test = "3.0"
+# For testing async code
+tokio-test = "0.4"
+# For testing CLI
+assert_cmd = "2.0"
+predicates = "3.0"
+
+[[bin]]
+name = "bxssh"
+path = "src/main.rs"
