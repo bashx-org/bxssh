@@ -1,16 +1,14 @@
 use anyhow::{Context, Result};
-use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
-use log::{debug, error, info};
-use std::io::{self, Write};
+use log::{error, info};
+use std::io;
 
 use crate::config::SshConfig;
 use crate::ssh_client::SshClient;
 use crate::ssh_impl::RealSshConnection;
 use crate::key_manager::KeyManager;
+use crate::terminal::SessionManager;
+use crate::cli_terminal::CliTerminalIO;
+
 
 pub fn connect(
     host: &str,
@@ -111,7 +109,18 @@ pub fn connect(
     if let Some(cmd) = command {
         execute_remote_command(&client, cmd)
     } else {
-        start_interactive_shell(&client)
+        // First test a simple command to verify connection works
+        info!("Testing connection with a simple command first...");
+        match execute_remote_command(&client, "echo 'SSH connection test successful'") {
+            Ok(_) => {
+                info!("Simple command test passed, starting interactive shell");
+                start_interactive_shell(&client)
+            }
+            Err(e) => {
+                error!("Simple command test failed: {}", e);
+                start_interactive_shell(&client) // Try shell anyway
+            }
+        }
     }
 }
 
@@ -125,79 +134,17 @@ fn execute_remote_command(client: &SshClient, command: &str) -> Result<()> {
 fn start_interactive_shell(client: &SshClient) -> Result<()> {
     info!("Starting interactive shell");
     
-    let mut session = client.start_shell()?;
+    let ssh_session = client.start_shell()?;
+    let terminal_io = CliTerminalIO::new();
     
-    enable_raw_mode().context("Failed to enable raw mode")?;
-    execute!(io::stdout(), EnterAlternateScreen).context("Failed to enter alternate screen")?;
-
-    let result = run_shell_loop(&mut session);
-
-    execute!(io::stdout(), LeaveAlternateScreen).context("Failed to leave alternate screen")?;
-    disable_raw_mode().context("Failed to disable raw mode")?;
-
-    result
+    let mut session_manager = SessionManager::new(
+        ssh_session,
+        Box::new(terminal_io)
+    );
+    
+    session_manager.run_session()
 }
 
-fn run_shell_loop(session: &mut Box<dyn crate::ssh_client::ShellSession>) -> Result<()> {
-    let mut buffer = [0; 1024];
-    
-    loop {
-        if event::poll(std::time::Duration::from_millis(100))? {
-            match event::read()? {
-                Event::Key(KeyEvent {
-                    code: KeyCode::Char('c'),
-                    modifiers: event::KeyModifiers::CONTROL,
-                    ..
-                }) => {
-                    debug!("Ctrl+C pressed, exiting");
-                    break;
-                }
-                Event::Key(KeyEvent { code, .. }) => {
-                    let input = match code {
-                        KeyCode::Enter => "\r\n",
-                        KeyCode::Tab => "\t",
-                        KeyCode::Backspace => "\x08",
-                        KeyCode::Char(c) => {
-                            let mut s = String::new();
-                            s.push(c);
-                            Box::leak(s.into_boxed_str())
-                        }
-                        _ => continue,
-                    };
-                    
-                    if let Err(e) = session.write(input.as_bytes()) {
-                        error!("Failed to write to session: {}", e);
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        match session.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(n) => {
-                let output = String::from_utf8_lossy(&buffer[..n]);
-                print!("{}", output);
-                io::stdout().flush()?;
-            }
-            Err(e) => {
-                if e.to_string().contains("WouldBlock") {
-                    continue;
-                }
-                error!("Failed to read from session: {}", e);
-                break;
-            }
-        }
-
-        if session.is_eof() {
-            debug!("Session EOF reached");
-            break;
-        }
-    }
-
-    Ok(())
-}
 
 fn create_temp_key_file(private_key_content: &str) -> Result<String> {
     use std::os::unix::fs::PermissionsExt;

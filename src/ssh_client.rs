@@ -11,7 +11,7 @@ pub trait SshConnection {
 }
 
 #[cfg_attr(test, mockall::automock)]
-pub trait ShellSession: std::fmt::Debug {
+pub trait ShellSession: std::fmt::Debug + Send + Sync {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
     fn write(&mut self, data: &[u8]) -> Result<usize>;
     fn is_eof(&self) -> bool;

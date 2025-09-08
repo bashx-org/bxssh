@@ -76,8 +76,15 @@ impl SshConnection for RealSshConnection {
             .ok_or_else(|| anyhow::anyhow!("Not connected"))?;
 
         let mut channel = session.channel_session().context("Failed to create channel")?;
+        
+        // Request PTY with basic settings - keep it simple for now
         channel.request_pty("xterm", None, None).context("Failed to request PTY")?;
+        
+        // Start the shell
         channel.shell().context("Failed to start shell")?;
+        
+        // Set the channel to non-blocking mode for better I/O handling
+        session.set_blocking(false);
         
         Ok(Box::new(RealShellSession { channel }))
     }
@@ -101,14 +108,23 @@ impl std::fmt::Debug for RealShellSession {
 
 impl ShellSession for RealShellSession {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-        self.channel.read(buf)
-            .map_err(|e| anyhow::anyhow!("Failed to read from shell: {}", e))
+        match self.channel.read(buf) {
+            Ok(n) => Ok(n),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(0),
+            Err(e) => Err(anyhow::anyhow!("Failed to read from shell: {}", e))
+        }
     }
 
     fn write(&mut self, data: &[u8]) -> Result<usize> {
         use std::io::Write;
-        self.channel.write(data)
-            .map_err(|e| anyhow::anyhow!("Failed to write to shell: {}", e))
+        match self.channel.write(data) {
+            Ok(n) => {
+                // Ensure the data is sent immediately
+                let _ = self.channel.flush();
+                Ok(n)
+            },
+            Err(e) => Err(anyhow::anyhow!("Failed to write to shell: {}", e))
+        }
     }
 
     fn is_eof(&self) -> bool {

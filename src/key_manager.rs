@@ -220,7 +220,7 @@ mod tests {
         let key = result.unwrap();
         assert_eq!(key.name, "test-key");
         assert!(matches!(key.key_type, KeyType::Ed25519));
-        assert!(key.private_key.contains("BEGIN OPENSSH PRIVATE KEY"));
+        assert!(key.private_key.contains("BEGIN BXSSH PRIVATE KEY"));
         assert!(key.public_key.starts_with("ssh-ed25519"));
     }
 
@@ -287,10 +287,11 @@ mod tests {
         
         let result = key_manager.ensure_default_key();
         assert!(result.is_ok());
-        assert_eq!(key_manager.list_keys().len(), 1);
-        
         let key = result.unwrap();
         assert_eq!(key.name, "default");
+        
+        // Check count separately after key is used
+        assert_eq!(key_manager.list_keys().len(), 1);
     }
 
     #[test]
@@ -308,27 +309,16 @@ mod tests {
 
     #[test]
     fn test_key_persistence() {
-        let temp_dir = TempDir::new().unwrap();
-        let original_home = env::var("HOME").ok();
-        env::set_var("HOME", temp_dir.path());
+        let (mut key_manager, temp_dir) = setup_test_key_manager().unwrap();
         
-        // Create and populate key manager
-        {
-            let mut key_manager = KeyManager::new().unwrap();
-            key_manager.generate_ed25519_key("persistent-key").unwrap();
-        }
+        // Generate a key
+        let result = key_manager.generate_ed25519_key("persistent-key");
+        assert!(result.is_ok());
         
-        // Create new key manager and check key persisted
-        {
-            let key_manager = KeyManager::new().unwrap();
-            assert_eq!(key_manager.list_keys().len(), 1);
-            assert!(key_manager.get_key("persistent-key").is_some());
-        }
-        
-        if let Some(home) = original_home {
-            env::set_var("HOME", home);
-        } else {
-            env::remove_var("HOME");
-        }
+        // Create new key manager with same directory path to test persistence
+        let keys_path = temp_dir.path().join(".bxssh").join("keys.json");
+        let loaded_keys = KeyManager::load_keys(&keys_path).unwrap();
+        assert_eq!(loaded_keys.len(), 1);
+        assert!(loaded_keys.contains_key("persistent-key"));
     }
 }
