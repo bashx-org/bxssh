@@ -90,7 +90,12 @@ impl SessionManager {
         }
         
         // Main session loop
+        let mut consecutive_empty_reads = 0;
+        const MAX_EMPTY_READS: usize = 100;
+        
         while self.terminal_io.should_continue() {
+            let mut had_activity = false;
+            
             // Handle user input -> SSH
             if let Some(input_data) = self.terminal_io.read_input()? {
                 if !input_data.is_empty() {
@@ -98,10 +103,18 @@ impl SessionManager {
                     match self.ssh_session.write(&input_data) {
                         Ok(bytes_written) => {
                             debug!("Wrote {} bytes to SSH session", bytes_written);
+                            had_activity = true;
                         }
                         Err(e) => {
-                            debug!("Failed to write to SSH session: {}", e);
-                            return Err(e);
+                            // Handle flow control errors gracefully
+                            if e.to_string().contains("draining incoming flow") {
+                                debug!("SSH flow control error during input, continuing...");
+                                std::thread::sleep(std::time::Duration::from_millis(100));
+                                continue;
+                            } else {
+                                debug!("Failed to write to SSH session: {}", e);
+                                return Err(e);
+                            }
                         }
                     }
                 }
@@ -110,11 +123,22 @@ impl SessionManager {
             // Handle SSH output -> user display
             match self.ssh_session.read(&mut ssh_buffer) {
                 Ok(0) => {
-                    // No data from SSH, continue
-                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    // No data from SSH
+                    consecutive_empty_reads += 1;
+                    if consecutive_empty_reads > MAX_EMPTY_READS {
+                        // Too many empty reads, might be connection issue
+                        debug!("Too many consecutive empty reads, checking connection");
+                        if self.ssh_session.is_eof() {
+                            info!("SSH session ended after empty reads");
+                            break;
+                        }
+                        consecutive_empty_reads = 0; // Reset counter
+                    }
                 }
                 Ok(n) => {
                     // Got data from SSH, display to user
+                    consecutive_empty_reads = 0;
+                    had_activity = true;
                     debug!("Received {} bytes from SSH", n);
                     
                     // Check for vim crash indicators in output
@@ -138,13 +162,25 @@ impl SessionManager {
                     let error_msg = e.to_string();
                     if error_msg.contains("WouldBlock") || 
                        error_msg.contains("Resource temporarily unavailable") {
-                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        // Normal for non-blocking I/O
+                    } else if error_msg.contains("draining incoming flow") {
+                        debug!("SSH channel flow control, backing off...");
+                        std::thread::sleep(std::time::Duration::from_millis(50));
                         continue;
                     } else {
                         debug!("SSH read error: {}", e);
                         return Err(e);
                     }
                 }
+            }
+            
+            // Adaptive sleep based on activity
+            if had_activity {
+                // High activity, shorter sleep for responsiveness
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            } else {
+                // Low activity, longer sleep to reduce CPU usage
+                std::thread::sleep(std::time::Duration::from_millis(10));
             }
             
             // Check if SSH session ended
