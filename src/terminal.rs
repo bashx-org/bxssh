@@ -116,7 +116,22 @@ impl SessionManager {
                 Ok(n) => {
                     // Got data from SSH, display to user
                     debug!("Received {} bytes from SSH", n);
-                    self.terminal_io.write_output(&ssh_buffer[..n])?;
+                    
+                    // Check for vim crash indicators in output
+                    let output_str = String::from_utf8_lossy(&ssh_buffer[..n]);
+                    if output_str.contains("Vim: Error reading input") || 
+                       output_str.contains("terminal too small") ||
+                       output_str.contains("E558") { // Vim error codes
+                        debug!("Detected vim terminal issue: {}", output_str);
+                    }
+                    
+                    match self.terminal_io.write_output(&ssh_buffer[..n]) {
+                        Ok(_) => {},
+                        Err(e) => {
+                            debug!("Failed to write output to terminal: {}", e);
+                            // Don't return error, just log and continue
+                        }
+                    }
                 }
                 Err(e) => {
                     // Check if it's a would-block error (non-blocking I/O)

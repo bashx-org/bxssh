@@ -40,7 +40,40 @@ impl TerminalIO for CliTerminalIO {
                     self.should_continue = false;
                     Ok(None)
                 }
-                Ok(Event::Key(KeyEvent { code, .. })) => {
+                Ok(Event::Key(KeyEvent { code, modifiers, .. })) => {
+                    // Handle Ctrl+key combinations that vim uses
+                    if modifiers.contains(event::KeyModifiers::CONTROL) {
+                        let ctrl_bytes = match code {
+                            KeyCode::Char('a') => b"\x01".to_vec(), // Ctrl+A
+                            KeyCode::Char('b') => b"\x02".to_vec(), // Ctrl+B  
+                            KeyCode::Char('d') => b"\x04".to_vec(), // Ctrl+D
+                            KeyCode::Char('e') => b"\x05".to_vec(), // Ctrl+E
+                            KeyCode::Char('f') => b"\x06".to_vec(), // Ctrl+F
+                            KeyCode::Char('g') => b"\x07".to_vec(), // Ctrl+G
+                            KeyCode::Char('h') => b"\x08".to_vec(), // Ctrl+H (backspace in vim)
+                            KeyCode::Char('i') => b"\x09".to_vec(), // Ctrl+I (tab)
+                            KeyCode::Char('j') => b"\x0a".to_vec(), // Ctrl+J
+                            KeyCode::Char('k') => b"\x0b".to_vec(), // Ctrl+K
+                            KeyCode::Char('l') => b"\x0c".to_vec(), // Ctrl+L
+                            KeyCode::Char('m') => b"\x0d".to_vec(), // Ctrl+M (enter)
+                            KeyCode::Char('n') => b"\x0e".to_vec(), // Ctrl+N
+                            KeyCode::Char('o') => b"\x0f".to_vec(), // Ctrl+O
+                            KeyCode::Char('p') => b"\x10".to_vec(), // Ctrl+P
+                            KeyCode::Char('q') => b"\x11".to_vec(), // Ctrl+Q
+                            KeyCode::Char('r') => b"\x12".to_vec(), // Ctrl+R
+                            KeyCode::Char('s') => b"\x13".to_vec(), // Ctrl+S
+                            KeyCode::Char('t') => b"\x14".to_vec(), // Ctrl+T
+                            KeyCode::Char('u') => b"\x15".to_vec(), // Ctrl+U
+                            KeyCode::Char('v') => b"\x16".to_vec(), // Ctrl+V
+                            KeyCode::Char('w') => b"\x17".to_vec(), // Ctrl+W
+                            KeyCode::Char('x') => b"\x18".to_vec(), // Ctrl+X
+                            KeyCode::Char('y') => b"\x19".to_vec(), // Ctrl+Y
+                            KeyCode::Char('z') => b"\x1a".to_vec(), // Ctrl+Z
+                            _ => return Ok(None), // Ignore other Ctrl combinations
+                        };
+                        debug!("Ctrl+{:?} pressed -> bytes: {:?}", code, String::from_utf8_lossy(&ctrl_bytes));
+                        return Ok(Some(ctrl_bytes));
+                    }
                     let input_bytes = match code {
                         KeyCode::Enter => b"\r".to_vec(),
                         KeyCode::Tab => b"\t".to_vec(), 
@@ -55,7 +88,21 @@ impl TerminalIO for CliTerminalIO {
                         KeyCode::End => b"\x1b[F".to_vec(),
                         KeyCode::PageUp => b"\x1b[5~".to_vec(),
                         KeyCode::PageDown => b"\x1b[6~".to_vec(),
+                        KeyCode::Insert => b"\x1b[2~".to_vec(),
                         KeyCode::Esc => b"\x1b".to_vec(),
+                        // Function keys that vim uses
+                        KeyCode::F(1) => b"\x1b[11~".to_vec(),
+                        KeyCode::F(2) => b"\x1b[12~".to_vec(),
+                        KeyCode::F(3) => b"\x1b[13~".to_vec(),
+                        KeyCode::F(4) => b"\x1b[14~".to_vec(),
+                        KeyCode::F(5) => b"\x1b[15~".to_vec(),
+                        KeyCode::F(6) => b"\x1b[17~".to_vec(),
+                        KeyCode::F(7) => b"\x1b[18~".to_vec(),
+                        KeyCode::F(8) => b"\x1b[19~".to_vec(),
+                        KeyCode::F(9) => b"\x1b[20~".to_vec(),
+                        KeyCode::F(10) => b"\x1b[21~".to_vec(),
+                        KeyCode::F(11) => b"\x1b[23~".to_vec(),
+                        KeyCode::F(12) => b"\x1b[24~".to_vec(),
                         _ => {
                             debug!("Ignoring key: {:?}", code);
                             return Ok(None);

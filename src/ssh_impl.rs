@@ -77,8 +77,19 @@ impl SshConnection for RealSshConnection {
 
         let mut channel = session.channel_session().context("Failed to create channel")?;
         
-        // Request PTY with basic settings - keep it simple for now
-        channel.request_pty("xterm", None, None).context("Failed to request PTY")?;
+        // Get terminal size for vim and other full-screen applications
+        let (width, height) = match crossterm::terminal::size() {
+            Ok((w, h)) => (w as u32, h as u32),
+            Err(_) => (80, 24), // fallback
+        };
+        
+        // Request PTY with proper terminal capabilities for vim
+        // Use xterm-256color which vim expects for full functionality
+        channel.request_pty("xterm-256color", None, None)
+            .context("Failed to request PTY")?;
+        
+        // Set the window size after PTY creation
+        channel.request_pty_size(width, height, Some(0), Some(0))?;
         
         // Start the shell
         channel.shell().context("Failed to start shell")?;
@@ -86,7 +97,10 @@ impl SshConnection for RealSshConnection {
         // Set the channel to non-blocking mode for better I/O handling
         session.set_blocking(false);
         
-        Ok(Box::new(RealShellSession { channel }))
+        Ok(Box::new(RealShellSession { 
+            channel,
+            last_size: Some((width, height)),
+        }))
     }
 
     fn is_authenticated(&self) -> bool {
@@ -98,6 +112,7 @@ impl SshConnection for RealSshConnection {
 
 pub struct RealShellSession {
     channel: Channel,
+    last_size: Option<(u32, u32)>,
 }
 
 impl std::fmt::Debug for RealShellSession {
@@ -106,8 +121,29 @@ impl std::fmt::Debug for RealShellSession {
     }
 }
 
+impl RealShellSession {
+    fn check_terminal_resize(&mut self) {
+        if let Ok((width, height)) = crossterm::terminal::size() {
+            let current_size = (width as u32, height as u32);
+            
+            if self.last_size != Some(current_size) {
+                // Terminal size changed, notify the remote PTY
+                if let Err(e) = self.channel.request_pty_size(current_size.0, current_size.1, Some(0), Some(0)) {
+                    log::debug!("Failed to update PTY size: {}", e);
+                } else {
+                    log::debug!("Updated PTY size to {}x{}", current_size.0, current_size.1);
+                    self.last_size = Some(current_size);
+                }
+            }
+        }
+    }
+}
+
 impl ShellSession for RealShellSession {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        // Check for terminal size changes before reading
+        self.check_terminal_resize();
+        
         match self.channel.read(buf) {
             Ok(n) => Ok(n),
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(0),
