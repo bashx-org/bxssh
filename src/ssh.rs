@@ -3,11 +3,13 @@ use ssh2::{Channel, Session};
 use std::io::Read;
 use std::net::TcpStream;
 
+#[allow(dead_code)] // Legacy implementation kept for reference
 pub struct SshClient {
     session: Session,
     _stream: TcpStream,
 }
 
+#[allow(dead_code)] // Legacy implementation kept for reference
 impl SshClient {
     pub fn connect(host: &str, port: u16, _username: &str) -> Result<Self> {
         let tcp = TcpStream::connect(format!("{}:{}", host, port))

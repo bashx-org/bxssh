@@ -321,6 +321,7 @@ fn is_color_pattern_at(chars: &[char], pos: usize) -> bool {
 }
 
 /// Check if a string looks like a hex color sequence (e.g., "ffff/ffff/ffff^G")
+#[allow(dead_code)] // Used in tests, may be used for future filtering enhancements
 fn is_hex_color_sequence(s: &str) -> bool {
     if s.len() < 15 { return false; } // Minimum length for xxxx/xxxx/xxxx^G
     

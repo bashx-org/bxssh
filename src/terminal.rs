@@ -227,14 +227,17 @@ mod tests {
             }
         }
         
+        #[allow(dead_code)] // Used in more complex test scenarios
         fn add_input(&self, data: Vec<u8>) {
             self.input_data.lock().unwrap().push(data);
         }
         
+        #[allow(dead_code)] // Used in more complex test scenarios
         fn get_output(&self) -> Vec<u8> {
             self.output_data.lock().unwrap().clone()
         }
         
+        #[allow(dead_code)] // Used in more complex test scenarios
         fn stop(&self) {
             *self.should_continue.lock().unwrap() = false;
         }

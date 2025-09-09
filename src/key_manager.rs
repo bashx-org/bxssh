@@ -125,6 +125,7 @@ impl KeyManager {
         Ok(format!("ssh-ed25519 {} bxssh-generated", base64_key))
     }
     
+    #[allow(dead_code)] // May be used for future key format compatibility
     pub fn extract_private_key_bytes(&self, private_key_pem: &str) -> Result<Vec<u8>> {
         // Extract the base64 content between the markers
         let lines: Vec<&str> = private_key_pem.lines().collect();
@@ -156,6 +157,7 @@ impl KeyManager {
         self.keys.values().collect()
     }
 
+    #[allow(dead_code)] // Will be used for key management CLI commands
     pub fn delete_key(&mut self, name: &str) -> Result<()> {
         if self.keys.remove(name).is_some() {
             self.save_keys()?;
