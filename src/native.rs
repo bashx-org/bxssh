@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use log::{error, info};
-use std::io;
+use std::io::{self, Write};
 
 use crate::config::SshConfig;
 use crate::ssh_client::SshClient;
@@ -80,7 +80,8 @@ pub fn connect(
                     error!("Key authentication failed: {}", e);
                     
                     // Offer password fallback
-                    println!("🔐 Key authentication failed. Try password authentication? (y/N)");
+                    print!("🔐 Key authentication failed. Try password authentication? (y/N): ");
+                    io::stdout().flush()?;
                     let mut input = String::new();
                     io::stdin().read_line(&mut input)?;
                     
@@ -169,6 +170,7 @@ mod tests {
     use super::*;
     use crate::ssh_client::{MockSshConnection, MockShellSession};
     
+    #[allow(dead_code)] // Helper function for future test scenarios
     fn setup_mock_client() -> SshClient {
         let mut mock_connection = MockSshConnection::new();
         mock_connection

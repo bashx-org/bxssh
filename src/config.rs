@@ -5,7 +5,9 @@ use dirs;
 
 #[derive(Debug, Clone)]
 pub struct SshConfig {
+    #[allow(dead_code)] // Used in tests and future features
     pub default_user: Option<String>,
+    #[allow(dead_code)] // Used in tests and future features
     pub default_port: u16,
     pub identity_file: Option<String>,
 }
@@ -55,18 +57,22 @@ impl SshConfig {
         self.identity_file.as_deref()
     }
 
+    #[allow(dead_code)] // Used in tests and future features
     pub fn get_default_user(&self) -> Option<&str> {
         self.default_user.as_deref()
     }
 
+    #[allow(dead_code)] // Used in tests and future features
     pub fn get_default_port(&self) -> u16 {
         self.default_port
     }
 
+    #[allow(dead_code)] // Used in tests and future features
     pub fn set_identity_file(&mut self, path: String) {
         self.identity_file = Some(path);
     }
 
+    #[allow(dead_code)] // Used in tests and future features
     pub fn set_default_user(&mut self, user: String) {
         self.default_user = Some(user);
     }
