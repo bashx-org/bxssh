@@ -15,7 +15,7 @@ echo "- OSC (Operating System Command) sequences"
 echo "- Mouse terminal sequences"
 echo ""
 echo "Instructions for testing:"
-echo "1. Run: RUST_LOG=debug ./target/debug/bxssh -u udara 192.168.1.110"
+echo "1. Run: RUST_LOG=debug ./target/debug/bxssh udara@192.168.1.110"
 echo "2. Enter your password when prompted"
 echo "3. Try opening vim: vim test.txt"
 echo "4. The 'lots of characters' should no longer appear"
@@ -28,4 +28,4 @@ echo "- 'Filtering problematic mouse/terminal sequences'"
 echo ""
 echo "Press Enter to start the test..."
 read
-RUST_LOG=debug ./target/debug/bxssh -u udara 192.168.1.110
+RUST_LOG=debug ./target/debug/bxssh udara@192.168.1.110
