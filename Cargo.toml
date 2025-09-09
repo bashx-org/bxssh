@@ -28,6 +28,7 @@ wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = ["console", "WebSocket", "MessageEvent", "ErrorEvent", "CloseEvent"] }
 console_error_panic_hook = "0.1"
+console_log = "1.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Native-only SSH implementation
@@ -54,3 +55,9 @@ predicates = "3.0"
 [[bin]]
 name = "bxssh"
 path = "src/main.rs"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
