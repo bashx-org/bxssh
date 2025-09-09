@@ -32,8 +32,8 @@ fn main() -> Result<()> {
         .author("bashx-org")
         .about("A WebAssembly-compatible SSH client CLI")
         .arg(
-            Arg::new("host")
-                .help("SSH host to connect to")
+            Arg::new("target")
+                .help("SSH target in format 'user@host' or just 'host' (requires -u)")
                 .required(false)
                 .index(1),
         )
@@ -92,18 +92,34 @@ fn main() -> Result<()> {
         return handle_list_keys();
     }
 
-    // Regular connection handling
-    let host = matches.get_one::<String>("host");
-    let username = matches.get_one::<String>("username");
+    // Parse connection target (user@host or host)
+    let target = matches.get_one::<String>("target");
+    let username_arg = matches.get_one::<String>("username");
     
-    if host.is_none() || username.is_none() {
-        eprintln!("Error: Host and username are required for SSH connections");
-        eprintln!("Use --help for usage information");
+    // Check for common mistake: using -u with user@host format
+    if target.is_none() {
+        if let Some(username) = username_arg {
+            if username.contains('@') {
+                eprintln!("Error: Invalid usage detected");
+                eprintln!("You used: bxssh -u '{}'", username);
+                eprintln!("Correct usage:");
+                eprintln!("  bxssh {}           (new format)", username);
+                eprintln!("  bxssh -u user host  (old format)");
+                std::process::exit(1);
+            }
+        }
+        
+        eprintln!("Error: Target host is required for SSH connections");
+        eprintln!("Usage: bxssh user@host  OR  bxssh -u user host");
+        eprintln!("Use --help for more information");
         std::process::exit(1);
     }
-
-    let host = host.unwrap();
-    let username = username.unwrap();
+    
+    let target = target.unwrap();
+    let (username, host) = parse_target(target, username_arg)?;
+    
+    // Debug log to show what was parsed
+    log::info!("Parsed target: username='{}', host='{}'", username, host);
     let port = matches
         .get_one::<String>("port")
         .unwrap()
@@ -122,7 +138,51 @@ fn main() -> Result<()> {
 
     #[cfg(not(target_arch = "wasm32"))]
     {
-        native::connect(host, port, username, identity, command, use_password)
+        native::connect(&host, port, &username, identity, command, use_password)
+    }
+}
+
+/// Parse target string to extract username and host
+/// Supports both "user@host" and just "host" (with -u flag)
+fn parse_target(target: &str, username_arg: Option<&String>) -> Result<(String, String)> {
+    if target.contains('@') {
+        // Parse user@host format
+        let parts: Vec<&str> = target.split('@').collect();
+        if parts.len() != 2 {
+            return Err(anyhow::anyhow!("Invalid target format. Use 'user@host'"));
+        }
+        
+        let username = parts[0].to_string();
+        let host = parts[1].to_string();
+        
+        if username.is_empty() || host.is_empty() {
+            return Err(anyhow::anyhow!("Username and host cannot be empty"));
+        }
+        
+        // If -u flag was also provided, check for common mistakes
+        if let Some(flag_user) = username_arg {
+            if flag_user.contains('@') {
+                return Err(anyhow::anyhow!(
+                    "Invalid usage: Don't use -u flag with user@host format.\n\
+                     Use either: 'bxssh {}' OR 'bxssh -u {} {}'", 
+                    target, username, host
+                ));
+            }
+            if flag_user != &username {
+                eprintln!("⚠️  Warning: Username from target '{}' overrides -u flag '{}'", username, flag_user);
+            }
+        }
+        
+        Ok((username, host))
+    } else {
+        // Just host provided, username must come from -u flag
+        if let Some(username) = username_arg {
+            Ok((username.clone(), target.to_string()))
+        } else {
+            Err(anyhow::anyhow!(
+                "Username is required. Use 'user@host' format or provide -u flag with hostname"
+            ))
+        }
     }
 }
 
@@ -164,7 +224,7 @@ fn handle_list_keys() -> Result<()> {
         for key in keys {
             println!("  • {} ({})", key.name, format!("{:?}", key.key_type));
         }
-        println!("\n💡 Use a key with: bxssh -u username -i <key-name> hostname");
+        println!("\n💡 Use a key with: bxssh -i <key-name> user@hostname");
     }
     
     Ok(())
@@ -222,4 +282,55 @@ pub async fn wasm_connect(host: &str, port: u16, username: &str, password: Optio
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
     
     Ok(JsValue::from_str("Session completed"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_parse_target_user_at_host() {
+        let result = parse_target("alice@example.com", None).unwrap();
+        assert_eq!(result.0, "alice");
+        assert_eq!(result.1, "example.com");
+    }
+    
+    #[test]
+    fn test_parse_target_host_only_with_username_flag() {
+        let username = "bob".to_string();
+        let result = parse_target("server.local", Some(&username)).unwrap();
+        assert_eq!(result.0, "bob");
+        assert_eq!(result.1, "server.local");
+    }
+    
+    #[test]
+    fn test_parse_target_user_at_host_overrides_flag() {
+        let username_flag = "bob".to_string();
+        let result = parse_target("alice@example.com", Some(&username_flag)).unwrap();
+        assert_eq!(result.0, "alice"); // Should use alice from target, not bob from flag
+        assert_eq!(result.1, "example.com");
+    }
+    
+    #[test]
+    fn test_parse_target_host_only_without_username_fails() {
+        let result = parse_target("example.com", None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Username is required"));
+    }
+    
+    #[test]
+    fn test_parse_target_invalid_format() {
+        let result = parse_target("user@host@extra", None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid target format"));
+    }
+    
+    #[test]
+    fn test_parse_target_empty_username_or_host() {
+        let result = parse_target("@host", None);
+        assert!(result.is_err());
+        
+        let result = parse_target("user@", None);
+        assert!(result.is_err());
+    }
 }

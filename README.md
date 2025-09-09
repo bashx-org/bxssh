@@ -12,24 +12,34 @@ A WebAssembly-compatible SSH client CLI built in Rust.
 
 ## Usage
 
-### Basic connection with SSH key
+### Basic connection with SSH key (preferred format)
+```bash
+bxssh user@hostname
+```
+
+### Alternative format (backward compatibility)
 ```bash
 bxssh -u username hostname
 ```
 
 ### Connection with specific port and key
 ```bash
-bxssh -u username -p 2222 -i ~/.ssh/my_key hostname
+bxssh -p 2222 -i ~/.ssh/my_key user@hostname
 ```
 
 ### Execute a single command
 ```bash
-bxssh -u username -c "ls -la" hostname
+bxssh -c "ls -la" user@hostname
+```
+
+### Use password authentication
+```bash
+bxssh --password user@hostname
 ```
 
 ### Interactive shell session
 ```bash
-bxssh -u username hostname
+bxssh user@hostname
 # Use Ctrl+C to exit
 ```
 
