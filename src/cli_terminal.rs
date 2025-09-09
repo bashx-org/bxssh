@@ -154,16 +154,51 @@ impl TerminalIO for CliTerminalIO {
             debug!("Vim cursor visibility command detected");
         }
         
-        // Filter out potentially problematic sequences for terminals that don't handle them well
-        let filtered_data = if data_str.contains("\x1b[>4;2m") || data_str.contains("\x1b[<") {
-            debug!("Filtering potentially problematic mouse/terminal sequences");
-            // Remove SGR mouse sequences and other problematic codes
-            data_str.replace("\x1b[>4;2m", "")
-                   .replace("\x1b[<", "")
-                   .into_bytes()
-        } else {
-            data.to_vec()
-        };
+        // Filter out problematic sequences that vim sends but terminals can't handle properly
+        let mut filtered_data = data.to_vec();
+        let mut filtered = false;
+        
+        // Remove SGR mouse sequences
+        if data_str.contains("\x1b[>4;2m") || data_str.contains("\x1b[<") {
+            debug!("Filtering problematic mouse/terminal sequences");
+            let temp_str = data_str.replace("\x1b[>4;2m", "").replace("\x1b[<", "");
+            filtered_data = temp_str.into_bytes();
+            filtered = true;
+        }
+        
+        // Remove specific vim color sequences that appear as literal text
+        if data_str.contains(":ffff/ffff/ffff\x07") || 
+           data_str.contains("]11;rgb:1e1e/1e1e/1e1e\x07") ||
+           data_str.contains("ffff/ffff/ffff") ||
+           data_str.contains("1e1e/1e1e/1e1e") {
+            debug!("Filtering vim color response sequences: {:?}", 
+                data_str.chars().take(50).collect::<String>());
+            
+            let mut temp_str = String::from_utf8_lossy(&filtered_data).to_string();
+            
+            // Remove the specific sequences you reported
+            temp_str = temp_str.replace(":ffff/ffff/ffff\x07", "");
+            temp_str = temp_str.replace("]11;rgb:1e1e/1e1e/1e1e\x07", "");
+            
+            // Remove similar patterns (hex color codes with ^G)
+            temp_str = remove_color_sequences(&temp_str);
+            
+            filtered_data = temp_str.into_bytes();
+            filtered = true;
+        }
+        
+        // Remove OSC sequences that start with ESC]
+        if data_str.contains("\x1b]") {
+            debug!("Filtering OSC sequences from vim");
+            let temp_str = String::from_utf8_lossy(&filtered_data).to_string();
+            filtered_data = remove_osc_sequences(&temp_str).into_bytes();
+            filtered = true;
+        }
+        
+        if filtered {
+            debug!("Filtered data, original length: {}, new length: {}", 
+                data.len(), filtered_data.len());
+        }
         
         // Write data directly to stdout - let the terminal handle escape sequences
         io::stdout().write_all(&filtered_data)
@@ -227,6 +262,123 @@ impl Drop for CliTerminalIO {
     }
 }
 
+/// Remove hex color sequences in the format xxxx/xxxx/xxxx followed by BEL (^G)
+fn remove_color_sequences(input: &str) -> String {
+    let mut result = String::new();
+    let mut i = 0;
+    let chars: Vec<char> = input.chars().collect();
+    
+    while i < chars.len() {
+        if chars[i] == ':' || chars[i] == ']' {
+            // Look ahead for a complete color pattern
+            let remaining: String = chars[i+1..].iter().collect();
+            
+            if let Some(end_pos) = find_color_sequence_end(&remaining) {
+                // Skip the : or ] and the entire color sequence
+                i += 1 + end_pos;
+                continue;
+            }
+        }
+        
+        result.push(chars[i]);
+        i += 1;
+    }
+    
+    result
+}
+
+/// Find the end position of a color sequence, returns None if not found
+fn find_color_sequence_end(s: &str) -> Option<usize> {
+    if s.len() < 15 { return None; }
+    
+    let chars: Vec<char> = s.chars().collect();
+    
+    // Look for pattern like: 11;rgb:xxxx/xxxx/xxxx^G or ffff/ffff/ffff^G
+    for start_pos in 0..=10 { // Allow for prefixes like "11;rgb:"
+        if start_pos + 15 > chars.len() { break; }
+        
+        if is_color_pattern_at(&chars, start_pos) {
+            return Some(start_pos + 15); // Include the BEL character
+        }
+    }
+    
+    None
+}
+
+/// Check if there's a color pattern (xxxx/xxxx/xxxx^G) at the given position
+fn is_color_pattern_at(chars: &[char], pos: usize) -> bool {
+    if pos + 15 > chars.len() { return false; }
+    
+    let hex1 = &chars[pos..pos+4];
+    let hex2 = &chars[pos+5..pos+9];
+    let hex3 = &chars[pos+10..pos+14];
+    
+    chars[pos+4] == '/' && chars[pos+9] == '/' && 
+    chars[pos+14] == '\x07' &&
+    hex1.iter().all(|c| c.is_ascii_hexdigit()) &&
+    hex2.iter().all(|c| c.is_ascii_hexdigit()) &&
+    hex3.iter().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Check if a string looks like a hex color sequence (e.g., "ffff/ffff/ffff^G")
+fn is_hex_color_sequence(s: &str) -> bool {
+    if s.len() < 15 { return false; } // Minimum length for xxxx/xxxx/xxxx^G
+    
+    let chars: Vec<char> = s.chars().collect();
+    
+    // Look for pattern: 4 hex digits, /, 4 hex digits, /, 4 hex digits, ^G
+    if chars.len() >= 15 {
+        let hex1 = &chars[0..4];
+        let hex2 = &chars[5..9];
+        let hex3 = &chars[10..14];
+        
+        return chars[4] == '/' && chars[9] == '/' && 
+               chars.get(14) == Some(&'\x07') &&
+               hex1.iter().all(|c| c.is_ascii_hexdigit()) &&
+               hex2.iter().all(|c| c.is_ascii_hexdigit()) &&
+               hex3.iter().all(|c| c.is_ascii_hexdigit());
+    }
+    
+    false
+}
+
+/// Remove OSC (Operating System Command) sequences
+/// These start with ESC] and end with BEL (^G) or ST (ESC\)
+fn remove_osc_sequences(input: &str) -> String {
+    let mut result = String::new();
+    let mut chars = input.chars().peekable();
+    
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            // Check if this is the start of an OSC sequence (ESC])
+            if let Some(&']') = chars.peek() {
+                chars.next(); // consume ']'
+                
+                // Skip until BEL (^G) or ST (ESC\)
+                while let Some(next_ch) = chars.next() {
+                    if next_ch == '\x07' { // BEL
+                        break;
+                    } else if next_ch == '\x1b' {
+                        // Check for ST (ESC\)
+                        if let Some(&'\\') = chars.peek() {
+                            chars.next(); // consume '\'
+                            break;
+                        } else {
+                            // Put back the ESC and continue
+                            result.push(next_ch);
+                        }
+                    }
+                }
+                continue;
+            }
+        }
+        
+        result.push(ch);
+    }
+    
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,5 +395,52 @@ mod tests {
         let mut terminal = CliTerminalIO::new();
         let result = terminal.write_output(b"test output");
         assert!(result.is_ok());
+    }
+    
+    #[test]
+    fn test_is_hex_color_sequence() {
+        // Valid hex color sequence
+        assert!(is_hex_color_sequence("ffff/ffff/ffff\x07"));
+        assert!(is_hex_color_sequence("1e1e/1e1e/1e1e\x07"));
+        assert!(is_hex_color_sequence("0000/0000/0000\x07"));
+        
+        // Invalid sequences
+        assert!(!is_hex_color_sequence("gggg/ffff/ffff\x07")); // Invalid hex
+        assert!(!is_hex_color_sequence("ffff/ffff/ffff")); // No BEL
+        assert!(!is_hex_color_sequence("fff/fff/fff\x07")); // Wrong length
+        assert!(!is_hex_color_sequence("ffff-ffff-ffff\x07")); // Wrong separator
+        assert!(!is_hex_color_sequence("short"));
+    }
+    
+    #[test]
+    fn test_remove_color_sequences() {
+        let input = "Hello:ffff/ffff/ffff\x07World";
+        let result = remove_color_sequences(input);
+        assert_eq!(result, "HelloWorld");
+        
+        let input = "Text]11;rgb:1e1e/1e1e/1e1e\x07More";
+        let result = remove_color_sequences(input);
+        assert_eq!(result, "TextMore");
+        
+        // Should not remove regular text
+        let input = "Normal text without sequences";
+        let result = remove_color_sequences(input);
+        assert_eq!(result, input);
+    }
+    
+    #[test]
+    fn test_remove_osc_sequences() {
+        let input = "Before\x1b]11;rgb:ffff/ffff/ffff\x07After";
+        let result = remove_osc_sequences(input);
+        assert_eq!(result, "BeforeAfter");
+        
+        let input = "Test\x1b]11;some-sequence\x1b\\More";
+        let result = remove_osc_sequences(input);
+        assert_eq!(result, "TestMore");
+        
+        // Should not remove regular escape sequences
+        let input = "Text\x1b[31mRed\x1b[0mNormal";
+        let result = remove_osc_sequences(input);
+        assert_eq!(result, input);
     }
 }
