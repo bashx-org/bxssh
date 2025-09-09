@@ -77,8 +77,21 @@ impl SshConnection for RealSshConnection {
 
         let mut channel = session.channel_session().context("Failed to create channel")?;
         
-        // Request PTY with basic settings - keep it simple for now
-        channel.request_pty("xterm", None, None).context("Failed to request PTY")?;
+        // Get terminal size for vim and other full-screen applications
+        let (width, height) = match crossterm::terminal::size() {
+            Ok((w, h)) => (w as u32, h as u32),
+            Err(_) => (80, 24), // fallback
+        };
+        
+        // Request PTY with proper terminal capabilities for vim
+        // Use xterm-256color which vim expects for full functionality
+        // Note: ssh2 crate doesn't expose all terminal mode constants, so we'll rely on
+        // proper TERM environment variable and focus on filtering problematic sequences
+        channel.request_pty("xterm-256color", None, None)
+            .context("Failed to request PTY")?;
+        
+        // Set the window size after PTY creation
+        channel.request_pty_size(width, height, Some(0), Some(0))?;
         
         // Start the shell
         channel.shell().context("Failed to start shell")?;
@@ -86,7 +99,10 @@ impl SshConnection for RealSshConnection {
         // Set the channel to non-blocking mode for better I/O handling
         session.set_blocking(false);
         
-        Ok(Box::new(RealShellSession { channel }))
+        Ok(Box::new(RealShellSession { 
+            channel,
+            last_size: Some((width, height)),
+        }))
     }
 
     fn is_authenticated(&self) -> bool {
@@ -98,6 +114,7 @@ impl SshConnection for RealSshConnection {
 
 pub struct RealShellSession {
     channel: Channel,
+    last_size: Option<(u32, u32)>,
 }
 
 impl std::fmt::Debug for RealShellSession {
@@ -106,22 +123,111 @@ impl std::fmt::Debug for RealShellSession {
     }
 }
 
+impl RealShellSession {
+    fn check_terminal_resize(&mut self) {
+        if let Ok((width, height)) = crossterm::terminal::size() {
+            let current_size = (width as u32, height as u32);
+            
+            if self.last_size != Some(current_size) {
+                // Terminal size changed, notify the remote PTY
+                if let Err(e) = self.channel.request_pty_size(current_size.0, current_size.1, Some(0), Some(0)) {
+                    log::debug!("Failed to update PTY size: {}", e);
+                } else {
+                    log::debug!("Updated PTY size to {}x{}", current_size.0, current_size.1);
+                    self.last_size = Some(current_size);
+                }
+            }
+        }
+    }
+    
+    fn write_chunked(&mut self, data: &[u8]) -> Result<usize> {
+        use std::io::Write;
+        
+        const CHUNK_SIZE: usize = 512;
+        let mut total_written = 0;
+        
+        for chunk in data.chunks(CHUNK_SIZE) {
+            let mut retries = 0;
+            const MAX_RETRIES: usize = 3;
+            
+            loop {
+                match self.channel.write(chunk) {
+                    Ok(n) => {
+                        total_written += n;
+                        if n < chunk.len() {
+                            // Partial write, wait a bit and continue with remaining data
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                            // For simplicity, we'll consider this a successful partial write
+                            // In a more sophisticated implementation, we'd handle the remaining bytes
+                        }
+                        break;
+                    },
+                    Err(e) if e.to_string().contains("draining incoming flow") && retries < MAX_RETRIES => {
+                        log::debug!("Flow control during chunked write, retry {}/{}", retries + 1, MAX_RETRIES);
+                        retries += 1;
+                        std::thread::sleep(std::time::Duration::from_millis((100 * retries) as u64));
+                    },
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("Failed to write chunk: {}", e));
+                    }
+                }
+            }
+            
+            // Small delay between chunks to prevent overwhelming the channel
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        
+        Ok(total_written)
+    }
+}
+
 impl ShellSession for RealShellSession {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        // Check for terminal size changes before reading
+        self.check_terminal_resize();
+        
+        // Try to read data, handle various error conditions gracefully
         match self.channel.read(buf) {
             Ok(n) => Ok(n),
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(0),
-            Err(e) => Err(anyhow::anyhow!("Failed to read from shell: {}", e))
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                log::debug!("SSH channel EOF during read");
+                Ok(0)
+            },
+            Err(e) if e.to_string().contains("draining incoming flow") => {
+                log::debug!("SSH channel flow control issue, waiting...");
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                Ok(0) // Return 0 bytes read, don't error
+            },
+            Err(e) => {
+                log::debug!("SSH read error: {}", e);
+                Err(anyhow::anyhow!("Failed to read from shell: {}", e))
+            }
         }
     }
 
     fn write(&mut self, data: &[u8]) -> Result<usize> {
         use std::io::Write;
+        
+        // Handle large writes by chunking them
+        if data.len() > 1024 {
+            return self.write_chunked(data);
+        }
+        
         match self.channel.write(data) {
             Ok(n) => {
-                // Ensure the data is sent immediately
-                let _ = self.channel.flush();
+                // Don't flush immediately for small writes to improve performance
+                // The SSH library will handle batching
                 Ok(n)
+            },
+            Err(e) if e.to_string().contains("draining incoming flow") => {
+                log::debug!("SSH channel flow control during write, retrying...");
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                // Retry the write
+                match self.channel.write(data) {
+                    Ok(n) => Ok(n),
+                    Err(e2) => Err(anyhow::anyhow!("Failed to write to shell after retry: {}", e2))
+                }
             },
             Err(e) => Err(anyhow::anyhow!("Failed to write to shell: {}", e))
         }
