@@ -2,7 +2,28 @@ use anyhow::Result;
 
 /// Abstraction for terminal input/output handling
 /// This allows different implementations for CLI vs WebAssembly
+#[cfg(not(target_arch = "wasm32"))]
 pub trait TerminalIO: Send + Sync {
+    /// Read input from the user (non-blocking)
+    /// Returns None if no input is available
+    fn read_input(&mut self) -> Result<Option<Vec<u8>>>;
+    
+    /// Write output to the user's display
+    fn write_output(&mut self, data: &[u8]) -> Result<()>;
+    
+    /// Check if the session should continue
+    fn should_continue(&self) -> bool;
+    
+    /// Initialize the terminal for interactive use
+    fn initialize(&mut self) -> Result<()>;
+    
+    /// Cleanup and restore terminal state
+    fn cleanup(&mut self) -> Result<()>;
+}
+
+/// WASM-compatible version without Send + Sync bounds
+#[cfg(target_arch = "wasm32")]
+pub trait TerminalIO {
     /// Read input from the user (non-blocking)
     /// Returns None if no input is available
     fn read_input(&mut self) -> Result<Option<Vec<u8>>>;

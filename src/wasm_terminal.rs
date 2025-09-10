@@ -70,7 +70,8 @@ impl TerminalIO for WasmTerminalIO {
             } else {
                 // Fallback to console output
                 let output_str = String::from_utf8_lossy(data);
-                console::log_1(&output_str.into());
+                let js_str: JsValue = output_str.as_ref().into();
+                console::log_1(&js_str);
             }
         }
         
@@ -150,7 +151,7 @@ impl WasmSSHSession {
     
     /// Start SSH session with WebSocket tunnel (placeholder)
     #[wasm_bindgen(js_name = startSession)]
-    pub async fn start_session(&mut self, host: &str, username: &str, password: &str) -> Result<(), JsValue> {
+    pub async fn start_session(&mut self, host: &str, username: &str, _password: &str) -> Result<(), JsValue> {
         // This would integrate with the WebSocket SSH implementation
         // For now, just log the attempt
         console::log_1(&format!("Starting WASM SSH session to {}@{}", username, host).into());
