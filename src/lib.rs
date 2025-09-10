@@ -11,6 +11,9 @@ pub mod config;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_ssh;
 
+#[cfg(target_arch = "wasm32")]
+pub mod ssh_protocol;
+
 #[cfg(not(target_arch = "wasm32"))]
 pub mod ssh_impl;
 
